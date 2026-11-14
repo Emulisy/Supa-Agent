@@ -1,1 +1,4 @@
 .env
+
+# Local deployment backups, including credentials.
+.local-backups/

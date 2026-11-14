@@ -5,12 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
 	"strings"
 
-	"github.com/Emulisy/Supa-Agent/internal/llm"
+	"github.com/Emulisy/Supa-Agent/internal/llm/gateway"
+	"github.com/Emulisy/Supa-Agent/internal/llm/provider"
 	"github.com/cloudwego/eino/schema"
 	"github.com/joho/godotenv"
 )
@@ -24,12 +26,18 @@ func main() {
 
 func run() error {
 	flags := flag.NewFlagSet("chat", flag.ContinueOnError)
-	modelName := flags.String("model", "", "DeepSeek model ID (empty uses the provider's default)")
+	configPath := flags.String("config", "configs/llm.yaml", "LLM deployment and logical model configuration")
+	modelName := flags.String("model", "", "Logical model name (empty uses default_model from YAML)")
+	timeout := flags.Duration("timeout", 0, "Overall request deadline, including streaming (zero uses provider defaults)")
+	streaming := flags.Bool("stream", false, "Stream the response")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
+	}
+	if *timeout < 0 {
+		return fmt.Errorf("timeout must not be negative")
 	}
 
 	// A missing .env is fine: environment variables can also come from the shell.
@@ -41,7 +49,19 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	chatModel, err := llm.New(ctx, llm.ProviderDeepSeek, *modelName)
+	cfg, err := gateway.LoadConfigFile(*configPath)
+	if err != nil {
+		return err
+	}
+	providers := provider.NewRegistry()
+	if err := providers.Register(provider.DeepSeek, provider.NewDeepSeek); err != nil {
+		return err
+	}
+	chatGateway, err := gateway.New(ctx, cfg, providers)
+	if err != nil {
+		return err
+	}
+	chatModel, err := chatGateway.Model(*modelName)
 	if err != nil {
 		return err
 	}
@@ -50,10 +70,34 @@ func run() error {
 	if prompt == "" {
 		prompt = "Explain what an AI agent is in three sentences."
 	}
-	response, err := chatModel.Generate(ctx, []*schema.Message{
+	input := []*schema.Message{
 		schema.SystemMessage("You are a helpful assistant. Keep answers concise."),
 		schema.UserMessage(prompt),
-	})
+	}
+	if *timeout > 0 {
+		var cancelRequest context.CancelFunc
+		ctx, cancelRequest = context.WithTimeout(ctx, *timeout)
+		defer cancelRequest()
+	}
+	if *streaming {
+		reader, err := chatModel.Stream(ctx, input)
+		if err != nil {
+			return fmt.Errorf("stream response: %w", err)
+		}
+		defer reader.Close()
+		for {
+			chunk, err := reader.Recv()
+			if errors.Is(err, io.EOF) {
+				fmt.Println()
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("receive response: %w", err)
+			}
+			fmt.Print(chunk.Content)
+		}
+	}
+	response, err := chatModel.Generate(ctx, input)
 	if err != nil {
 		return fmt.Errorf("generate response: %w", err)
 	}

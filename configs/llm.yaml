@@ -1,0 +1,25 @@
+# Loaded once at startup. Credentials are resolved from the process environment.
+default_model: agent-default
+
+deployments:
+  - id: deepseek-flash
+    provider: deepseek
+    model: deepseek-flash
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+
+  - id: deepseek-pro
+    provider: deepseek
+    model: deepseek-v4-pro
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+
+# Phase 1 maps each logical model to exactly one deployment. Several logical
+# models may share a deployment and its initialized client.
+models:
+  - name: agent-default
+    deployment_ids: [deepseek-flash]
+  - name: agent-fast
+    deployment_ids: [deepseek-flash]
+  - name: agent-pro
+    deployment_ids: [deepseek-pro]
