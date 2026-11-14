@@ -21,29 +21,8 @@ const (
 // ErrInvalidToken indicates that an access JWT failed verification or validation.
 var ErrInvalidToken = errors.New("auth: invalid access token")
 
-// JWTManager signs and validates access JWTs without database or session lookups.
-// Construct it once at startup and share it between authentication handlers.
-type JWTManager struct {
-	secret []byte
-	ttl    time.Duration
-}
-
-// NewJWTManager requires a secret containing at least 32 cryptographically random
-// bytes and a TTL of at least one second, the precision used for JWT timestamps.
-func NewJWTManager(secret string, ttl time.Duration) (*JWTManager, error) {
-	manager := &JWTManager{secret: []byte(secret), ttl: ttl}
-	if err := manager.validateConfig(); err != nil {
-		return nil, err
-	}
-	return manager, nil
-}
-
-// GenerateJWT creates an HS256 access token for an authenticated user's ID.
-// Call it only after successfully verifying the user's credentials.
-func (m *JWTManager) GenerateJWT(userID uint64) (string, error) {
-	if err := m.validateConfig(); err != nil {
-		return "", err
-	}
+// generateJWT is called after account creation or successful password verification.
+func (s *Service) generateJWT(userID uint64) (string, error) {
 	if userID == 0 {
 		return "", errors.New("auth: JWT user ID must be positive")
 	}
@@ -54,29 +33,31 @@ func (m *JWTManager) GenerateJWT(userID uint64) (string, error) {
 		Subject:   strconv.FormatUint(userID, 10),
 		Audience:  jwt.ClaimStrings{jwtAudience},
 		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl)),
 		ID:        rand.Text(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString(m.secret)
+	signed, err := token.SignedString(s.secret)
 	if err != nil {
 		return "", fmt.Errorf("auth: sign JWT: %w", err)
 	}
 	return signed, nil
 }
 
-// ValidateJWT verifies a raw token string and returns its authenticated user ID.
+// ValidateJWT verifies a raw token string and returns its authenticated user ID,
+// without database or session lookups.
 // It requires HS256, the app's issuer and audience, expiration, issued-at, and a
 // positive uint64 subject. Callers can identify failures with ErrInvalidToken and
 // specific causes such as jwt.ErrTokenExpired using errors.Is.
-func (m *JWTManager) ValidateJWT(tokenString string) (uint64, error) {
-	if err := m.validateConfig(); err != nil {
-		return 0, err
+func (s *Service) ValidateJWT(tokenString string) (uint64, error) {
+	// A zero-value service must never accept tokens signed with an empty HMAC key.
+	if s == nil || len(s.secret) < 32 {
+		return 0, errors.New("auth: service is not initialized")
 	}
 	var claims jwt.RegisteredClaims
 	token, err := jwt.ParseWithClaims(tokenString, &claims, func(_ *jwt.Token) (any, error) {
-		return m.secret, nil
+		return s.secret, nil
 	},
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 		jwt.WithIssuer(jwtIssuer),
@@ -99,17 +80,4 @@ func (m *JWTManager) ValidateJWT(tokenString string) (uint64, error) {
 		return 0, fmt.Errorf("%w: subject must be a positive uint64 user ID", ErrInvalidToken)
 	}
 	return userID, nil
-}
-
-func (m *JWTManager) validateConfig() error {
-	if m == nil {
-		return errors.New("auth: JWT manager is required")
-	}
-	if len(m.secret) < 32 {
-		return errors.New("auth: JWT secret must be at least 32 bytes")
-	}
-	if m.ttl < time.Second {
-		return errors.New("auth: JWT TTL must be at least one second")
-	}
-	return nil
 }

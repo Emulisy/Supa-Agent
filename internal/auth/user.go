@@ -1,4 +1,4 @@
-// Package auth provides user persistence and password helpers for authentication.
+// Package auth manages user accounts, passwords, and access tokens.
 package auth
 
 import (
@@ -33,41 +33,35 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Credentials is an internal authentication record. Use User for public profiles.
-// PasswordHash is excluded from JSON to prevent accidental disclosure.
-type Credentials struct {
-	ID           uint64 `json:"id"`
-	Email        string `json:"email"`
-	PasswordHash string `json:"-"`
-}
-
-// Repository stores and retrieves user records using a shared connection pool.
-type Repository struct {
-	db *sql.DB
-}
-
-// NewRepository constructs a repository without opening or closing connections.
-// Pass infra.Client.DB when using the project's MySQL client.
-func NewRepository(db *sql.DB) (*Repository, error) {
-	if db == nil {
-		return nil, errors.New("user: database is required")
+// UserByID loads public account data. Callers supply an authorized user ID.
+func (s *Service) UserByID(ctx context.Context, userID uint64) (*User, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("auth: service is not initialized")
 	}
-	return &Repository{db: db}, nil
-}
-
-// Create stores a precomputed password hash and returns the generated ID.
-// The caller is responsible for password validation and hashing.
-// Email addresses are trimmed and treated as case-insensitive account identifiers.
-// The database's unique email constraint also protects concurrent registrations.
-func (r *Repository) Create(ctx context.Context, email, passwordHash string) (uint64, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("user: create: %w", err)
+		return nil, fmt.Errorf("user: find by ID: %w", err)
 	}
-	email, err := normalizeEmail(email)
+	if userID == 0 {
+		return nil, ErrNotFound
+	}
+	var u User
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, email, created_at, updated_at FROM users WHERE id = ?`,
+		userID,
+	).Scan(&u.ID, &u.Email, &u.CreatedAt, &u.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("user: find by ID: %w", ErrNotFound)
+	}
 	if err != nil {
-		return 0, err
+		return nil, fmt.Errorf("user: find by ID: %w", err)
 	}
-	result, err := r.db.ExecContext(ctx,
+	return &u, nil
+}
+
+// createUser persists the normalized email and password hash prepared by Register.
+// The database's unique email constraint protects concurrent registrations.
+func (s *Service) createUser(ctx context.Context, email, passwordHash string) (uint64, error) {
+	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO users (email, password_hash) VALUES (?, ?)`,
 		email, passwordHash,
 	)
@@ -93,19 +87,10 @@ func (r *Repository) Create(ctx context.Context, email, passwordHash string) (ui
 	return uint64(id), nil
 }
 
-// FindByEmail returns the account metadata for an email, or ErrNotFound.
-// It applies the same email normalization as Create and never selects credentials.
-func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("user: find by email: %w", err)
-	}
-	email, err := normalizeEmail(email)
-	if err != nil {
-		return nil, err
-	}
-
+// findByEmail reads public account data for an already-normalized email.
+func (s *Service) findByEmail(ctx context.Context, email string) (*User, error) {
 	var u User
-	err = r.db.QueryRowContext(ctx,
+	err := s.db.QueryRowContext(ctx,
 		`SELECT id, email, created_at, updated_at FROM users WHERE email = ?`,
 		email,
 	).Scan(&u.ID, &u.Email, &u.CreatedAt, &u.UpdatedAt)
@@ -118,29 +103,21 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, erro
 	return &u, nil
 }
 
-// FindCredentialsByEmail returns the stored credentials for authentication, or
-// ErrNotFound. It applies the same email normalization as Create and FindByEmail.
-func (r *Repository) FindCredentialsByEmail(ctx context.Context, email string) (*Credentials, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("user: find credentials by email: %w", err)
-	}
-	email, err := normalizeEmail(email)
-	if err != nil {
-		return nil, err
-	}
-
-	var credentials Credentials
-	err = r.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash FROM users WHERE email = ?`,
+// findCredentialsByEmail keeps password hashes separate from public User values.
+func (s *Service) findCredentialsByEmail(ctx context.Context, email string) (uint64, string, error) {
+	var userID uint64
+	var passwordHash string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, password_hash FROM users WHERE email = ?`,
 		email,
-	).Scan(&credentials.ID, &credentials.Email, &credentials.PasswordHash)
+	).Scan(&userID, &passwordHash)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("user: find credentials by email: %w", ErrNotFound)
+		return 0, "", fmt.Errorf("user: find credentials by email: %w", ErrNotFound)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("user: find credentials by email: %w", err)
+		return 0, "", fmt.Errorf("user: find credentials by email: %w", err)
 	}
-	return &credentials, nil
+	return userID, passwordHash, nil
 }
 
 func normalizeEmail(email string) (string, error) {

@@ -23,14 +23,10 @@ type RedisConfig struct {
 	WriteTimeout time.Duration
 }
 
-// RedisClient wraps a Redis connection pool. The caller must close it when finished.
-type RedisClient struct {
-	*redis.Client
-}
-
-// NewRedis opens a Redis pool and verifies the connection before returning it.
+// OpenRedis opens a Redis pool and verifies the connection before returning it.
+// The caller closes the returned client when finished.
 // Use a context with a deadline to bound initialization time.
-func NewRedis(ctx context.Context, cfg RedisConfig) (*RedisClient, error) {
+func OpenRedis(ctx context.Context, cfg RedisConfig) (*redis.Client, error) {
 	if strings.TrimSpace(cfg.Addr) == "" {
 		return nil, fmt.Errorf("redis: address is required")
 	}
@@ -55,5 +51,5 @@ func NewRedis(ctx context.Context, cfg RedisConfig) (*RedisClient, error) {
 		return nil, fmt.Errorf("redis: ping: %w", err)
 	}
 
-	return &RedisClient{Client: client}, nil
+	return client, nil
 }

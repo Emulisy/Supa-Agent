@@ -19,14 +19,10 @@ type Config struct {
 	ConnMaxIdleTime time.Duration
 }
 
-// Client wraps a MySQL connection pool. The caller must close it when finished.
-type Client struct {
-	*sql.DB
-}
-
-// New opens a MySQL pool and verifies the connection before returning it.
+// OpenMySQL opens a MySQL pool and verifies the connection before returning it.
+// The caller closes the returned pool when finished.
 // Use a context with a deadline to bound initialization time.
-func New(ctx context.Context, cfg Config) (*Client, error) {
+func OpenMySQL(ctx context.Context, cfg Config) (*sql.DB, error) {
 	if cfg.DSN == "" {
 		return nil, fmt.Errorf("mysql: DSN is required")
 	}
@@ -57,7 +53,5 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("mysql: ping: %w", err)
 	}
 
-	return &Client{DB: db}, nil
+	return db, nil
 }
-
-
