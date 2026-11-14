@@ -1,5 +1,5 @@
-// Package user provides MySQL-backed user creation and lookup.
-package user
+// Package auth provides user persistence and password helpers for authentication.
+package auth
 
 import (
 	"context"
@@ -12,22 +12,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-sql-driver/mysql"
-	"golang.org/x/crypto/bcrypt"
 )
 
-const (
-	MinPasswordLength = 8
-
-	MaxPasswordBytes = 72
-
-	maxEmailBytes = 254
-)
+const maxEmailBytes = 254
 
 var (
 	// ErrInvalidEmail indicates that an email is not a single, bare email address.
 	ErrInvalidEmail = errors.New("user: invalid email address")
-	// ErrInvalidPassword indicates that a password does not meet the input policy.
-	ErrInvalidPassword = errors.New("user: invalid password")
 	// ErrEmailExists indicates that the users table's unique constraint was violated.
 	ErrEmailExists = errors.New("user: email already exists")
 	// ErrNotFound indicates that no user has the requested email.
@@ -42,7 +33,15 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// dependency injection
+// Credentials is an internal authentication record. Use User for public profiles.
+// PasswordHash is excluded from JSON to prevent accidental disclosure.
+type Credentials struct {
+	ID           uint64 `json:"id"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"-"`
+}
+
+// Repository stores and retrieves user records using a shared connection pool.
 type Repository struct {
 	db *sql.DB
 }
@@ -56,11 +55,11 @@ func NewRepository(db *sql.DB) (*Repository, error) {
 	return &Repository{db: db}, nil
 }
 
-// Create validates the inputs, hashes the plaintext password with bcrypt, and
-// returns the generated ID. Email addresses are trimmed and treated as
-// case-insensitive account identifiers. Passwords are used exactly as supplied.
+// Create stores a precomputed password hash and returns the generated ID.
+// The caller is responsible for password validation and hashing.
+// Email addresses are trimmed and treated as case-insensitive account identifiers.
 // The database's unique email constraint also protects concurrent registrations.
-func (r *Repository) Create(ctx context.Context, email, password string) (uint64, error) {
+func (r *Repository) Create(ctx context.Context, email, passwordHash string) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, fmt.Errorf("user: create: %w", err)
 	}
@@ -68,20 +67,6 @@ func (r *Repository) Create(ctx context.Context, email, password string) (uint64
 	if err != nil {
 		return 0, err
 	}
-	if err := validatePassword(password); err != nil {
-		return 0, err
-	}
-
-	passwordHash, err := hashPassword(password)
-	if err != nil {
-		return 0, fmt.Errorf("user: hash password: %w", err)
-	}
-	// Bcrypt itself cannot be interrupted; avoid an INSERT if the deadline passed
-	// while the password was being hashed.
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("user: create: %w", err)
-	}
-
 	result, err := r.db.ExecContext(ctx,
 		`INSERT INTO users (email, password_hash) VALUES (?, ?)`,
 		email, passwordHash,
@@ -133,6 +118,31 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, erro
 	return &u, nil
 }
 
+// FindCredentialsByEmail returns the stored credentials for authentication, or
+// ErrNotFound. It applies the same email normalization as Create and FindByEmail.
+func (r *Repository) FindCredentialsByEmail(ctx context.Context, email string) (*Credentials, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("user: find credentials by email: %w", err)
+	}
+	email, err := normalizeEmail(email)
+	if err != nil {
+		return nil, err
+	}
+
+	var credentials Credentials
+	err = r.db.QueryRowContext(ctx,
+		`SELECT id, email, password_hash FROM users WHERE email = ?`,
+		email,
+	).Scan(&credentials.ID, &credentials.Email, &credentials.PasswordHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("user: find credentials by email: %w", ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("user: find credentials by email: %w", err)
+	}
+	return &credentials, nil
+}
+
 func normalizeEmail(email string) (string, error) {
 	email = strings.TrimSpace(email)
 	if email == "" || len(email) > maxEmailBytes || !utf8.ValidString(email) {
@@ -147,25 +157,4 @@ func normalizeEmail(email string) (string, error) {
 		return "", ErrInvalidEmail
 	}
 	return email, nil
-}
-
-func validatePassword(password string) error {
-	if len(password) > MaxPasswordBytes {
-		return fmt.Errorf("%w: must not exceed %d bytes", ErrInvalidPassword, MaxPasswordBytes)
-	}
-	if !utf8.ValidString(password) {
-		return fmt.Errorf("%w: must be valid UTF-8", ErrInvalidPassword)
-	}
-	if utf8.RuneCountInString(password) < MinPasswordLength {
-		return fmt.Errorf("%w: must contain at least %d characters", ErrInvalidPassword, MinPasswordLength)
-	}
-	return nil
-}
-
-func hashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return "", err
-	}
-	return string(hash), nil
 }
