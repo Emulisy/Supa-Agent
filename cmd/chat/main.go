@@ -11,10 +11,8 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/Emulisy/Supa-Agent/internal/llm/gateway"
-	"github.com/Emulisy/Supa-Agent/internal/llm/provider"
+	"github.com/Emulisy/Supa-Agent/internal/llm"
 	"github.com/cloudwego/eino/schema"
-	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -26,8 +24,9 @@ func main() {
 
 func run() error {
 	flags := flag.NewFlagSet("chat", flag.ContinueOnError)
-	configPath := flags.String("config", "configs/llm.yaml", "LLM deployment and logical model configuration")
-	modelName := flags.String("model", "", "Logical model name (empty uses default_model from YAML)")
+	configPath := flags.String("config", "configs/llm.yaml", "Supported model configuration")
+	modelName := flags.String("model", "", "Configured model ID (empty uses default_model from YAML)")
+	listModels := flags.Bool("list-models", false, "List configured model IDs without loading credentials")
 	timeout := flags.Duration("timeout", 0, "Overall request deadline, including streaming (zero uses provider defaults)")
 	streaming := flags.Bool("stream", false, "Stream the response")
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -40,28 +39,23 @@ func run() error {
 		return fmt.Errorf("timeout must not be negative")
 	}
 
-	// A missing .env is fine: environment variables can also come from the shell.
-	// Existing shell variables take precedence over values loaded from .env.
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("load .env: %w", err)
+	cfg, err := llm.LoadConfigFile(*configPath)
+	if err != nil {
+		return err
+	}
+	if *listModels {
+		for _, p := range cfg.Providers {
+			for _, name := range p.AvailableModels {
+				fmt.Println(name)
+			}
+		}
+		return nil
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	cfg, err := gateway.LoadConfigFile(*configPath)
-	if err != nil {
-		return err
-	}
-	providers := provider.NewRegistry()
-	if err := providers.Register(provider.DeepSeek, provider.NewDeepSeek); err != nil {
-		return err
-	}
-	chatGateway, err := gateway.New(ctx, cfg, providers)
-	if err != nil {
-		return err
-	}
-	chatModel, err := chatGateway.Model(*modelName)
+	chatGateway, err := llm.New(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -80,7 +74,7 @@ func run() error {
 		defer cancelRequest()
 	}
 	if *streaming {
-		reader, err := chatModel.Stream(ctx, input)
+		reader, err := chatGateway.Stream(ctx, *modelName, input)
 		if err != nil {
 			return fmt.Errorf("stream response: %w", err)
 		}
@@ -97,7 +91,7 @@ func run() error {
 			fmt.Print(chunk.Content)
 		}
 	}
-	response, err := chatModel.Generate(ctx, input)
+	response, err := chatGateway.Generate(ctx, *modelName, input)
 	if err != nil {
 		return fmt.Errorf("generate response: %w", err)
 	}
