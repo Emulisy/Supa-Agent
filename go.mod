@@ -3,13 +3,15 @@ module github.com/Emulisy/Supa-Agent
 go 1.26.4
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/cloudwego/eino v0.9.23
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.7
 	github.com/cohesion-org/deepseek-go v1.3.4
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/joho/godotenv v1.5.1
-	gopkg.in/yaml.v3 v3.0.1
 	github.com/redis/go-redis/v9 v9.23.0
+	golang.org/x/crypto v0.39.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require github.com/ollama/ollama v0.6.5 // indirect
@@ -45,7 +47,6 @@ require (
 	github.com/yargevad/filepathx v1.0.0 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
 	golang.org/x/arch v0.12.0 // indirect
-	golang.org/x/crypto v0.39.0 // indirect
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
