@@ -16,7 +16,8 @@ CREATE TABLE agents (
             'plan_execute',
             'sequential',
             'parallel',
-            'loop'
+            'loop',
+            'supervisor'
         )),
 
     FOREIGN KEY (user_id)
