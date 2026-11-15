@@ -11,6 +11,9 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// ErrUnsupportedModel means a model selector is not present in the gateway config.
+var ErrUnsupportedModel = errors.New("llm: unsupported model")
+
 // Gateway creates and reuses wrapped Eino clients for the configured models.
 // Its model map is read-only after construction and can be shared by callers.
 type Gateway struct {
@@ -55,6 +58,18 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 	return g, nil
 }
 
+// ValidateModel checks an explicit model ID against the configured catalog
+// without resolving a client. An empty name defers selection to runtime.
+func (g *Gateway) ValidateModel(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, ok := g.models[name]; !ok {
+		return fmt.Errorf("%w %q", ErrUnsupportedModel, name)
+	}
+	return nil
+}
+
 // Model returns a gateway-wrapped Eino model, including its WithTools method.
 // An empty name uses default_model, or the first configured model if none is set.
 func (g *Gateway) Model(name string) (model.ToolCallingChatModel, error) {
@@ -63,7 +78,7 @@ func (g *Gateway) Model(name string) (model.ToolCallingChatModel, error) {
 	}
 	chatModel, ok := g.models[name]
 	if !ok {
-		return nil, fmt.Errorf("llm: unsupported model %q", name)
+		return nil, fmt.Errorf("%w %q", ErrUnsupportedModel, name)
 	}
 	return chatModel, nil
 }

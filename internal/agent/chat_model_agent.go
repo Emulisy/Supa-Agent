@@ -14,21 +14,14 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
-// ChatModelResolver selects an initialized model without making provider calls.
-// The project's llm.Gateway implements this interface; an empty name selects its
-// configured default model.
-type ChatModelResolver interface {
-	Model(name string) (model.ToolCallingChatModel, error)
-}
-
 // ChatModelConfig is the JSON configuration stored in Definition.Config.
-// For example: {"name":"assistant","instruction":"Be helpful."} uses the
-// gateway's default model and Eino's default iteration limit.
+// An omitted model selects the current default at runtime. A zero MaxIterations
+// uses Eino's default iteration limit.
 type ChatModelConfig struct {
+	ModelConfig
 	Name          string `json:"name"`
 	Description   string `json:"description,omitempty"`
 	Instruction   string `json:"instruction,omitempty"`
-	Model         string `json:"model,omitempty"`
 	MaxIterations int    `json:"max_iterations,omitempty"`
 }
 
@@ -37,40 +30,39 @@ type ChatModelConfig struct {
 // the caller, so configuration is parsed again for every validation and build.
 type ChatModelAgent struct {
 	Definition *Definition
-	models     ChatModelResolver
 }
 
 var _ Agent = (*ChatModelAgent)(nil)
 
-// NewChatModelAgent checks configuration and dependencies without resolving a
-// model or calling a provider. Validate and Build check model availability.
-func NewChatModelAgent(definition *Definition, models ChatModelResolver) (*ChatModelAgent, error) {
-	if chatModelDependencyMissing(models) {
-		return nil, errors.New("agent: chat model resolver is required")
-	}
-	a := &ChatModelAgent{Definition: definition, models: models}
-	if _, err := a.configuration(); err != nil {
+// NewChatModelAgent validates configuration structure. Service checks the model
+// against the platform catalog and supplies the resolved model when building.
+func NewChatModelAgent(definition *Definition) (*ChatModelAgent, error) {
+	a := &ChatModelAgent{Definition: definition}
+	if err := a.Validate(); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-// Validate checks the current definition, JSON configuration, and model selector.
-// It does not build an agent, write to the database, or invoke the model.
+// Validate checks the current definition and JSON configuration structure.
+// It does not check model availability or invoke a provider.
 func (a *ChatModelAgent) Validate() error {
-	_, _, err := a.resolveModel()
+	_, err := a.configuration()
 	return err
 }
 
 // Build creates a fresh Eino ChatModelAgent using the current configuration and
-// the shared model resolver. It performs no model generation or persistence.
-func (a *ChatModelAgent) Build(ctx context.Context) (adk.Agent, error) {
+// the model supplied by Service. It performs no model generation or persistence.
+func (a *ChatModelAgent) Build(ctx context.Context, chatModel model.ToolCallingChatModel) (adk.Agent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("agent: build chat model: %w", err)
 	}
-	config, chatModel, err := a.resolveModel()
+	config, err := a.configuration()
 	if err != nil {
 		return nil, err
+	}
+	if chatModelDependencyMissing(chatModel) {
+		return nil, errors.New("agent: chat model is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("agent: build chat model: %w", err)
@@ -125,25 +117,7 @@ func (a *ChatModelAgent) configuration() (*ChatModelConfig, error) {
 	return config, nil
 }
 
-func (a *ChatModelAgent) resolveModel() (*ChatModelConfig, model.ToolCallingChatModel, error) {
-	config, err := a.configuration()
-	if err != nil {
-		return nil, nil, err
-	}
-	if chatModelDependencyMissing(a.models) {
-		return nil, nil, errors.New("agent: chat model resolver is required")
-	}
-	chatModel, err := a.models.Model(config.Model)
-	if err != nil {
-		return nil, nil, fmt.Errorf("agent: resolve chat model: %w", err)
-	}
-	if chatModelDependencyMissing(chatModel) {
-		return nil, nil, errors.New("agent: model resolver returned a nil chat model")
-	}
-	return config, chatModel, nil
-}
-
-// Interface values may contain a nil pointer (for example, *llm.Gateway).
+// An Eino model interface may contain a nil pointer.
 func chatModelDependencyMissing(dependency any) bool {
 	if dependency == nil {
 		return true

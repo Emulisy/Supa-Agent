@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 )
 
 type Type string
@@ -26,9 +27,15 @@ type Definition struct {
 	Config json.RawMessage
 }
 
+// ModelConfig is shared by model-backed agent configurations. An omitted Model
+// selects the gateway's current default at runtime.
+type ModelConfig struct {
+	Model string `json:"model,omitempty"`
+}
+
 // Agent provides type-specific validation and Eino runtime construction.
-// Service coordinates persistence so concrete agents do not depend on a database.
+// Service resolves models at runtime and coordinates persistence for agents.
 type Agent interface {
 	Validate() error
-	Build(ctx context.Context) (adk.Agent, error)
+	Build(ctx context.Context, chatModel model.ToolCallingChatModel) (adk.Agent, error)
 }
