@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 
 	"github.com/cloudwego/eino/components"
 	"github.com/cloudwego/eino/components/model"
@@ -10,24 +11,36 @@ import (
 
 // gatewayModel keeps calls through the gateway even when a caller uses the
 // returned Eino model directly or derives a tool-bound model from it.
+// Provider failures return the package errors without switching models.
 type gatewayModel struct {
-	name   string
 	client model.ToolCallingChatModel
 }
 
 func (m *gatewayModel) Generate(ctx context.Context, messages []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	return m.client.Generate(ctx, messages, opts...)
+	message, err := m.client.Generate(ctx, messages, opts...)
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return message, ErrGenerateFailed
+	}
+	return message, err
 }
 
 // Stream preserves the provider reader and its caller-owned close lifecycle.
+// Errors received after streaming starts propagate directly from that reader.
 func (m *gatewayModel) Stream(ctx context.Context, messages []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	return m.client.Stream(ctx, messages, opts...)
+	reader, err := m.client.Stream(ctx, messages, opts...)
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return reader, ErrStreamFailed
+	}
+	return reader, err
 }
 
 func (m *gatewayModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
 	client, err := m.client.WithTools(tools)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, ErrBindToolsFailed
 	}
 	bound := *m
 	bound.client = client

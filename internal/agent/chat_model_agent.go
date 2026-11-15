@@ -67,6 +67,8 @@ func (a *ChatModelAgent) Build(ctx context.Context, chatModel model.ToolCallingC
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("agent: build chat model: %w", err)
 	}
+	// Leave ModelFailoverConfig unset until backup model selection is supported.
+	// The gateway reports errors from the selected model to the runtime caller.
 	built, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:          config.Name,
 		Description:   config.Description,
