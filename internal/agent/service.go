@@ -8,9 +8,10 @@ import (
 
 	"github.com/Emulisy/Supa-Agent/internal/llm"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
 )
 
-// Service coordinates agent validation, runtime construction, and persistence.
+// Service coordinates agent validation, runtime construction, execution, and persistence.
 // Share it between requests; callers own their definitions.
 type Service struct {
 	repo    *Repository
@@ -64,6 +65,22 @@ func (s *Service) Build(ctx context.Context, def *Definition) (adk.Agent, error)
 		return nil, fmt.Errorf("agent: resolve model: %w", err)
 	}
 	return a.Build(ctx, chatModel)
+}
+
+// Run builds def and starts a streaming Eino run with the supplied message history.
+// Setup errors are returned directly; execution errors arrive in AgentEvent.Err.
+// The caller must close message streams in returned events and cancel ctx if it
+// stops consuming the iterator before the run completes.
+func (s *Service) Run(ctx context.Context, def *Definition, messages []*schema.Message, opts ...adk.AgentRunOption) (*adk.AsyncIterator[*adk.AgentEvent], error) {
+	a, err := s.Build(ctx, def)
+	if err != nil {
+		return nil, fmt.Errorf("agent: run: %w", err)
+	}
+	runner := adk.NewRunner(ctx, adk.RunnerConfig{
+		Agent:           a,
+		EnableStreaming: true,
+	})
+	return runner.Run(ctx, messages, opts...), nil
 }
 
 // Delete removes the authenticated user's definition. It does not validate config,
