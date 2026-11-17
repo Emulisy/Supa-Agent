@@ -2,3 +2,6 @@
 
 # Local deployment backups, including credentials.
 .local-backups/
+
+# Local conversation history.
+data/

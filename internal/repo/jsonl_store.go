@@ -1,4 +1,4 @@
-package memory
+package repo
 
 import (
 	"bufio"
@@ -15,16 +15,18 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/Emulisy/Supa-Agent/internal/model"
 )
 
-// Store manages persisted sessions and caches their histories in memory. Share
-// one Store per directory; concurrent processes or Stores writing to the same
+// jsonlStore manages persisted sessions and caches their histories in memory. Share
+// one jsonlStore per directory; concurrent processes or Stores writing to the same
 // directory are not supported. No file handles are kept open between operations.
 // On Windows, session IDs follow the filesystem's case-insensitive behavior.
-type Store struct {
+type jsonlStore struct {
 	mu    sync.Mutex
 	dir   string
-	cache map[string]*Session
+	cache map[string]*jsonlSession
 }
 
 type sessionHeader struct {
@@ -33,9 +35,9 @@ type sessionHeader struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// NewStore creates dir if necessary. Relative paths are resolved at construction
+// newJSONLStore creates dir if necessary. Relative paths are resolved at construction
 // so a later change of working directory cannot redirect session operations.
-func NewStore(dir string) (*Store, error) {
+func newJSONLStore(dir string) (*jsonlStore, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("memory: storage directory is required")
 	}
@@ -46,36 +48,12 @@ func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, fmt.Errorf("memory: create storage directory: %w", err)
 	}
-	return &Store{dir: abs, cache: make(map[string]*Session)}, nil
-}
-
-// GetOrCreate retrieves an entire conversation, or persists a new empty one.
-// IDs are supplied by callers and must be nonempty, portable filename components.
-func (s *Store) GetOrCreate(id string) (*Session, error) {
-	if err := s.validate(id); err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	key := sessionKey(id)
-	if session := s.cache[key]; session != nil {
-		return session, nil
-	}
-	path := filepath.Join(s.dir, id+".jsonl")
-	session, err := loadSession(path, id)
-	if errors.Is(err, os.ErrNotExist) {
-		session, err = createSession(path, id)
-	}
-	if err != nil {
-		return nil, err
-	}
-	s.cache[key] = session
-	return session, nil
+	return &jsonlStore{dir: abs, cache: make(map[string]*jsonlSession)}, nil
 }
 
 // List includes uncached sessions on disk, newest first, with ID ascending for
 // equal creation times. A malformed session returns an error, not a partial list.
-func (s *Store) List() ([]SessionInfo, error) {
+func (s *jsonlStore) List() ([]model.SessionInfo, error) {
 	if s == nil || s.dir == "" {
 		return nil, errors.New("memory: store is not initialized")
 	}
@@ -85,7 +63,7 @@ func (s *Store) List() ([]SessionInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("memory: list sessions: %w", err)
 	}
-	sessions := make([]SessionInfo, 0)
+	sessions := make([]model.SessionInfo, 0)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
 			continue
@@ -103,7 +81,7 @@ func (s *Store) List() ([]SessionInfo, error) {
 			}
 			s.cache[key] = session
 		}
-		sessions = append(sessions, SessionInfo{
+		sessions = append(sessions, model.SessionInfo{
 			ID: session.ID, CreatedAt: session.CreatedAt, Title: session.Title(),
 		})
 	}
@@ -117,9 +95,9 @@ func (s *Store) List() ([]SessionInfo, error) {
 }
 
 // Delete removes a session file and invalidates any cached handle for appends.
-// Missing sessions return an error wrapping os.ErrNotExist. A later GetOrCreate
-// with the same ID starts a new conversation; older handles remain invalid.
-func (s *Store) Delete(id string) error {
+// Missing sessions return an error wrapping os.ErrNotExist. Cached handles
+// become invalid for appends even if a file with the same ID is later created.
+func (s *jsonlStore) Delete(id string) error {
 	if err := s.validate(id); err != nil {
 		return err
 	}
@@ -144,7 +122,7 @@ func (s *Store) Delete(id string) error {
 	return nil
 }
 
-func (s *Store) validate(id string) error {
+func (s *jsonlStore) validate(id string) error {
 	if s == nil || s.dir == "" || s.cache == nil {
 		return errors.New("memory: store is not initialized")
 	}
@@ -185,7 +163,7 @@ func sessionKey(id string) string {
 	return id
 }
 
-func createSession(path, id string) (*Session, error) {
+func createSession(path, id string) (*jsonlSession, error) {
 	header := sessionHeader{Type: "session", ID: id, CreatedAt: time.Now().UTC()}
 	data, err := json.Marshal(header)
 	if err != nil {
@@ -198,17 +176,17 @@ func createSession(path, id string) (*Session, error) {
 	if err := writeRecordAndClose(file, data); err != nil {
 		return nil, fmt.Errorf("memory: create session %q: %w", id, errors.Join(err, os.Remove(path)))
 	}
-	return &Session{ID: id, CreatedAt: header.CreatedAt, path: path}, nil
+	return &jsonlSession{ID: id, CreatedAt: header.CreatedAt, path: path}, nil
 }
 
-func loadSession(path, id string) (*Session, error) {
+func loadSession(path, id string) (*jsonlSession, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("memory: open session %q: %w", id, err)
 	}
 	defer file.Close()
 	reader := bufio.NewReader(file)
-	session := &Session{path: path}
+	session := &jsonlSession{path: path}
 	for line := 1; ; line++ {
 		// ReadBytes has no Scanner-style token limit, including for media or
 		// large tool responses. Every record must end with a newline.
