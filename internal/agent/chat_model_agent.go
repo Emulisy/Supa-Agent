@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 
+	domain "github.com/Emulisy/Supa-Agent/internal/model"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 )
@@ -18,7 +19,7 @@ import (
 // An omitted model selects the current default at runtime. A zero MaxIterations
 // uses Eino's default iteration limit.
 type ChatModelConfig struct {
-	ModelConfig
+	domain.ModelConfig
 	Name          string `json:"name"`
 	Description   string `json:"description,omitempty"`
 	Instruction   string `json:"instruction,omitempty"`
@@ -26,17 +27,15 @@ type ChatModelConfig struct {
 }
 
 // ChatModelAgent validates a persisted definition and builds an Eino agent.
-// Persistence is coordinated separately by Service. Definition remains owned by
+// Persistence is coordinated by application services. Definition remains owned by
 // the caller, so configuration is parsed again for every validation and build.
 type ChatModelAgent struct {
-	Definition *Definition
+	Definition *domain.Definition
 }
 
-var _ Agent = (*ChatModelAgent)(nil)
-
-// NewChatModelAgent validates configuration structure. Service checks the model
+// NewChatModelAgent validates configuration structure. Runtime checks the model
 // against the platform catalog and supplies the resolved model when building.
-func NewChatModelAgent(definition *Definition) (*ChatModelAgent, error) {
+func NewChatModelAgent(definition *domain.Definition) (*ChatModelAgent, error) {
 	a := &ChatModelAgent{Definition: definition}
 	if err := a.Validate(); err != nil {
 		return nil, err
@@ -52,7 +51,7 @@ func (a *ChatModelAgent) Validate() error {
 }
 
 // Build creates a fresh Eino ChatModelAgent using the current configuration and
-// the model supplied by Service. It performs no model generation or persistence.
+// the model supplied by Runtime. It performs no model generation or persistence.
 func (a *ChatModelAgent) Build(ctx context.Context, chatModel model.ToolCallingChatModel) (adk.Agent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("agent: build chat model: %w", err)
@@ -87,34 +86,34 @@ func (a *ChatModelAgent) Build(ctx context.Context, chatModel model.ToolCallingC
 
 func (a *ChatModelAgent) configuration() (*ChatModelConfig, error) {
 	if a == nil {
-		return nil, fmt.Errorf("%w: chat model agent is not initialized", ErrInvalidDefinition)
+		return nil, fmt.Errorf("%w: chat model agent is not initialized", domain.ErrInvalidDefinition)
 	}
-	if err := validateDefinition(a.Definition); err != nil {
+	if err := domain.ValidateDefinition(a.Definition); err != nil {
 		return nil, err
 	}
-	if a.Definition.Type != TypeChatModel {
-		return nil, fmt.Errorf("%w: chat model agent requires type %q", ErrInvalidDefinition, TypeChatModel)
+	if a.Definition.Type != domain.TypeChatModel {
+		return nil, fmt.Errorf("%w: chat model agent requires type %q", domain.ErrInvalidDefinition, domain.TypeChatModel)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(a.Definition.Config))
 	decoder.DisallowUnknownFields()
 	var config *ChatModelConfig
 	if err := decoder.Decode(&config); err != nil {
-		return nil, fmt.Errorf("%w: decode chat model config: %v", ErrInvalidDefinition, err)
+		return nil, fmt.Errorf("%w: decode chat model config: %v", domain.ErrInvalidDefinition, err)
 	}
 	if config == nil {
-		return nil, fmt.Errorf("%w: chat model config must be an object", ErrInvalidDefinition)
+		return nil, fmt.Errorf("%w: chat model config must be an object", domain.ErrInvalidDefinition)
 	}
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("%w: chat model config must contain one JSON object", ErrInvalidDefinition)
+		return nil, fmt.Errorf("%w: chat model config must contain one JSON object", domain.ErrInvalidDefinition)
 	}
 	if strings.TrimSpace(config.Name) == "" {
-		return nil, fmt.Errorf("%w: chat model name is required", ErrInvalidDefinition)
+		return nil, fmt.Errorf("%w: chat model name is required", domain.ErrInvalidDefinition)
 	}
 	if config.Model != "" && strings.TrimSpace(config.Model) == "" {
-		return nil, fmt.Errorf("%w: chat model selector must not be whitespace", ErrInvalidDefinition)
+		return nil, fmt.Errorf("%w: chat model selector must not be whitespace", domain.ErrInvalidDefinition)
 	}
 	if config.MaxIterations < 0 {
-		return nil, fmt.Errorf("%w: max_iterations must be non-negative", ErrInvalidDefinition)
+		return nil, fmt.Errorf("%w: max_iterations must be non-negative", domain.ErrInvalidDefinition)
 	}
 	return config, nil
 }
