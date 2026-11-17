@@ -3,8 +3,6 @@ module github.com/Emulisy/Supa-Agent
 go 1.26.4
 
 require (
-	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/cloudwego/eino v0.9.23
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.7
 	github.com/cohesion-org/deepseek-go v1.3.4
