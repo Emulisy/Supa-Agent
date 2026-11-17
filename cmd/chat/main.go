@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 
+	"github.com/Emulisy/Supa-Agent/internal/config"
 	"github.com/Emulisy/Supa-Agent/internal/llm"
 	"github.com/cloudwego/eino/schema"
 )
@@ -55,7 +56,10 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	chatGateway, err := llm.New(ctx, cfg)
+	if err := config.LoadEnvironment(); err != nil {
+		return err
+	}
+	chatGateway, err := llm.New(ctx, cfg, config.ProviderCredentials())
 	if err != nil {
 		return err
 	}

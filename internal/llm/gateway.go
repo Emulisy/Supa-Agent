@@ -2,13 +2,10 @@ package llm
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"github.com/joho/godotenv"
 )
 
 // Gateway creates and reuses wrapped Eino clients for the configured models.
@@ -19,18 +16,14 @@ type Gateway struct {
 	models       map[string]model.ToolCallingChatModel
 }
 
-// New loads .env and constructs a client for each model. Existing environment
-// variables take precedence. Credentials are passed directly to the provider
-// adapter and are never added to Config or ProviderConfig.
-func New(ctx context.Context, cfg Config) (*Gateway, error) {
+// New constructs reusable clients with explicitly supplied provider credentials.
+// Credentials are never retained in Config or ProviderConfig.
+func New(ctx context.Context, cfg Config, credentials map[string]string) (*Gateway, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
-	}
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("llm: load .env: %w", err)
 	}
 
 	g := &Gateway{
@@ -46,7 +39,7 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 				return nil, err
 			}
 			// Config validation currently allows only the DeepSeek provider.
-			client, err := newDeepSeek(ctx, p, name)
+			client, err := newDeepSeek(ctx, p, name, credentials[p.Name])
 			if err != nil {
 				return nil, fmt.Errorf("llm: create model %q: %w", name, err)
 			}

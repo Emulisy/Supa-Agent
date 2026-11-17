@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/cloudwego/eino-ext/components/model/deepseek"
@@ -12,8 +11,7 @@ import (
 
 const ProviderDeepSeek = "deepseek"
 
-func newDeepSeek(ctx context.Context, cfg ProviderConfig, name string) (model.ToolCallingChatModel, error) {
-	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+func newDeepSeek(ctx context.Context, cfg ProviderConfig, name, apiKey string) (model.ToolCallingChatModel, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("deepseek: DEEPSEEK_API_KEY is required in .env or the process environment")
 	}

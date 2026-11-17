@@ -9,9 +9,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// Config contains the MySQL DSN and optional connection-pool settings.
+// MySQLConfig contains the MySQL DSN and optional connection-pool settings.
 // Positive pool settings override the database/sql defaults.
-type Config struct {
+type MySQLConfig struct {
 	DSN             string
 	MaxOpenConns    int
 	MaxIdleConns    int
@@ -22,7 +22,7 @@ type Config struct {
 // OpenMySQL opens a MySQL pool and verifies the connection before returning it.
 // The caller closes the returned pool when finished.
 // Use a context with a deadline to bound initialization time.
-func OpenMySQL(ctx context.Context, cfg Config) (*sql.DB, error) {
+func OpenMySQL(ctx context.Context, cfg MySQLConfig) (*sql.DB, error) {
 	if cfg.DSN == "" {
 		return nil, fmt.Errorf("mysql: DSN is required")
 	}
