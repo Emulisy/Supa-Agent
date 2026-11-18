@@ -6,6 +6,7 @@ require (
 	github.com/cloudwego/eino v0.9.23
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.7
 	github.com/cohesion-org/deepseek-go v1.3.4
+	github.com/expr-lang/expr v1.17.8
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/joho/godotenv v1.5.1

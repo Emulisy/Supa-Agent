@@ -20,10 +20,11 @@ import (
 // uses Eino's default iteration limit.
 type ChatModelConfig struct {
 	domain.ModelConfig
-	Name          string `json:"name"`
-	Description   string `json:"description,omitempty"`
-	Instruction   string `json:"instruction,omitempty"`
-	MaxIterations int    `json:"max_iterations,omitempty"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description,omitempty"`
+	Instruction   string   `json:"instruction,omitempty"`
+	MaxIterations int      `json:"max_iterations,omitempty"`
+	Tools         []string `json:"tools,omitempty"`
 }
 
 // ChatModelAgent validates a persisted definition and builds an Eino agent.
@@ -66,15 +67,21 @@ func (a *ChatModelAgent) Build(ctx context.Context, chatModel model.ToolCallingC
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("agent: build chat model: %w", err)
 	}
-	// Leave ModelFailoverConfig unset until backup model selection is supported.
-	// The gateway reports errors from the selected model to the runtime caller.
-	built, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+	adkConfig := &adk.ChatModelAgentConfig{
 		Name:          config.Name,
 		Description:   config.Description,
 		Instruction:   config.Instruction,
 		Model:         chatModel,
 		MaxIterations: config.MaxIterations,
-	})
+	}
+	for _, name := range config.Tools {
+		t, err := builtinTool(name)
+		if err != nil {
+			return nil, fmt.Errorf("agent: build tool: %w", err)
+		}
+		adkConfig.ToolsConfig.Tools = append(adkConfig.ToolsConfig.Tools, t)
+	}
+	built, err := adk.NewChatModelAgent(ctx, adkConfig)
 	if err != nil {
 		return nil, fmt.Errorf("agent: build chat model: %w", err)
 	}
@@ -114,6 +121,16 @@ func (a *ChatModelAgent) configuration() (*ChatModelConfig, error) {
 	}
 	if config.MaxIterations < 0 {
 		return nil, fmt.Errorf("%w: max_iterations must be non-negative", domain.ErrInvalidDefinition)
+	}
+	seen := make(map[string]bool, len(config.Tools))
+	for _, name := range config.Tools {
+		if name != "calculator" && name != "datetime" {
+			return nil, fmt.Errorf("%w: unknown tool %q", domain.ErrInvalidDefinition, name)
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("%w: duplicate tool %q", domain.ErrInvalidDefinition, name)
+		}
+		seen[name] = true
 	}
 	return config, nil
 }
