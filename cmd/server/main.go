@@ -94,6 +94,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	memories, err := service.NewMemoryService(agents, memoryRepo)
+	if err != nil {
+		return err
+	}
 	chat, err := service.NewChatService(ctx, agents, runtime, sessions, runs, service.ChatConfig{RunTimeout: cfg.RunTimeout, MaxConcurrent: cfg.MaxConcurrent})
 	if err != nil {
 		return err
@@ -103,7 +107,7 @@ func run() error {
 		defer cancel()
 		_ = chat.Shutdown(cleanup)
 	}()
-	router, err := api.NewRouter(auth, agents, chat, tokens)
+	router, err := api.NewRouter(auth, agents, chat, memories, tokens)
 	if err != nil {
 		return err
 	}

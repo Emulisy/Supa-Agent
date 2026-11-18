@@ -78,6 +78,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status, message = http.StatusNotFound, "session not found"
 	case errors.Is(err, model.ErrRunNotFound):
 		status, message = http.StatusNotFound, "run not found"
+	case errors.Is(err, model.ErrMemoryNotFound):
+		status, message = http.StatusNotFound, "memory not found"
 	case errors.Is(err, model.ErrInvalidEmail):
 		status, message = http.StatusBadRequest, "invalid email"
 	case errors.Is(err, security.ErrInvalidPassword):

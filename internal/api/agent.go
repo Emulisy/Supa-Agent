@@ -85,28 +85,8 @@ func (h *handler) getAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) listAgents(w http.ResponseWriter, r *http.Request) {
-	limit, offset := 20, 0
-	var err error
-	if value, ok := r.URL.Query()["limit"]; ok {
-		if len(value) != 1 {
-			writeError(w, model.ErrInvalidPagination)
-			return
-		}
-		limit, err = strconv.Atoi(value[0])
-	}
-	if err != nil {
-		writeError(w, model.ErrInvalidPagination)
-		return
-	}
-	if value, ok := r.URL.Query()["offset"]; ok {
-		if len(value) != 1 {
-			writeError(w, model.ErrInvalidPagination)
-			return
-		}
-		offset, err = strconv.Atoi(value[0])
-	}
-	if err != nil || limit < 1 || limit > model.MaxPageSize || offset < 0 {
-		writeError(w, model.ErrInvalidPagination)
+	limit, offset, ok := pagination(w, r)
+	if !ok {
 		return
 	}
 	list, err := h.agents.ListByUserID(r.Context(), owner(r), limit, offset)
@@ -115,4 +95,32 @@ func (h *handler) listAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+func pagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {
+	limit, offset := 20, 0
+	var err error
+	if value, ok := r.URL.Query()["limit"]; ok {
+		if len(value) != 1 {
+			writeError(w, model.ErrInvalidPagination)
+			return 0, 0, false
+		}
+		limit, err = strconv.Atoi(value[0])
+	}
+	if err != nil {
+		writeError(w, model.ErrInvalidPagination)
+		return 0, 0, false
+	}
+	if value, ok := r.URL.Query()["offset"]; ok {
+		if len(value) != 1 {
+			writeError(w, model.ErrInvalidPagination)
+			return 0, 0, false
+		}
+		offset, err = strconv.Atoi(value[0])
+	}
+	if err != nil || limit < 1 || limit > model.MaxPageSize || offset < 0 {
+		writeError(w, model.ErrInvalidPagination)
+		return 0, 0, false
+	}
+	return limit, offset, true
 }

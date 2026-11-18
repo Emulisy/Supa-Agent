@@ -8,16 +8,17 @@ import (
 )
 
 type handler struct {
-	auth   *service.AuthService
-	agents *service.AgentService
-	chat   *service.ChatService
+	auth     *service.AuthService
+	agents   *service.AgentService
+	chat     *service.ChatService
+	memories *service.MemoryService
 }
 
-func NewRouter(auth *service.AuthService, agents *service.AgentService, chat *service.ChatService, tokens TokenVerifier) (http.Handler, error) {
-	if auth == nil || agents == nil || chat == nil || tokens == nil {
+func NewRouter(auth *service.AuthService, agents *service.AgentService, chat *service.ChatService, memories *service.MemoryService, tokens TokenVerifier) (http.Handler, error) {
+	if auth == nil || agents == nil || chat == nil || memories == nil || tokens == nil {
 		return nil, errors.New("api: all dependencies are required")
 	}
-	h := &handler{auth: auth, agents: agents, chat: chat}
+	h := &handler{auth: auth, agents: agents, chat: chat, memories: memories}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -32,6 +33,9 @@ func NewRouter(auth *service.AuthService, agents *service.AgentService, chat *se
 	protect("GET /agents", h.listAgents)
 	protect("GET /agents/{id}", h.getAgent)
 	protect("POST /agents/{id}/runs", h.startRun)
+	protect("GET /agents/{id}/memories", h.listMemories)
+	protect("POST /agents/{id}/memories/{memory_id}/archive", h.changeMemory)
+	protect("DELETE /agents/{id}/memories/{memory_id}", h.changeMemory)
 	protect("GET /runs/{id}", h.getRun)
 	protect("POST /runs/{id}/cancel", h.cancelRun)
 	protect("GET /runs/{id}/events", h.runEvents)

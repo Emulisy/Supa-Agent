@@ -1,7 +1,7 @@
 # Supa-Agent
 
 A Go modular monolith for authenticated agent management and streaming chat. It
-uses Eino and DeepSeek for execution, MySQL for accounts and agent definitions,
+uses Eino and DeepSeek for execution, MySQL for accounts, agents, and long-term memory,
 Redis Streams for temporary run events, and local JSONL files for conversations.
 
 ## Architecture
@@ -27,8 +27,10 @@ using your MySQL client:
 
 1. `internal/sql/000001_create_users.up.sql`
 2. `internal/sql/000002_create_agents.up.sql`
+3. `internal/sql/000003_create_agent_memories.up.sql`
 
-Startup does not apply migrations. Existing database schemas require no changes.
+Startup does not apply migrations. On an existing Supa database, apply migration
+`000003` before enabling long-term memory or calling the memories API.
 
 Copy `.env.example` to `.env`, fill in the MySQL connection and DeepSeek key, and
 set `JWT_SECRET` to a cryptographically random value. For example, generate a
@@ -87,6 +89,9 @@ run bodies are limited to 64 KiB. Errors use `{"error":"message"}`.
 | `PUT /agents/{id}` | Replace `{type,config}` |
 | `DELETE /agents/{id}` | Delete an owned definition; returns 204 |
 | `POST /agents/{id}/runs` | Start `{content,session_id?}`; returns 202 and `Location` |
+| `GET /agents/{id}/memories?limit=20&offset=0` | Active and archived memories for an owned agent, most recently updated first |
+| `POST /agents/{id}/memories/{memory_id}/archive` | Exclude a memory from recall; returns 204 |
+| `DELETE /agents/{id}/memories/{memory_id}` | Permanently remove a memory; returns 204 |
 | `GET /runs/{id}` | Run descriptor |
 | `GET /runs/{id}/events` | Replay and follow authenticated SSE |
 | `POST /runs/{id}/cancel` | Cancel; 202 while running, 200 when terminal; safe to repeat |
@@ -103,6 +108,43 @@ models automatically.
 Missing and other-owner resources return the same 404. A second run or deletion
 on an active session returns 409. Runs in different sessions can execute
 concurrently, up to the configured limit; excess submissions return 429.
+
+## NexusAgent memory and basic tools
+
+Enable them on a `chat_model` agent when creating it or replacing its config.
+
+```json
+{
+  "type": "chat_model",
+  "config": {
+    "name": "assistant",
+    "instruction": "Be helpful and concise.",
+    "tools": ["calculator", "datetime"],
+    "memory_window": 20,
+    "memory_long_enabled": true
+  }
+}
+```
+
+- `tools` enables only the named Eino tools. `calculator` evaluates arithmetic.
+  `datetime` supports `now`, `add_days`, and `diff`, which counts calendar days
+  until January 1 of the next year. Its default time zone is `Asia/Shanghai`.
+- `memory_window` enables short-term compaction at 1–200 messages. Eino
+  summarizes older turns when the window or estimated 8,192-token budget is
+  exceeded. Recent turns keep their associated tool calls and results. The
+  full transcript stays available through the sessions API.
+- `memory_long_enabled` learns durable user facts after a successful turn has
+  been saved and recalls relevant facts in later sessions of the same agent.
+  With no explicit window, it also enables compaction with a 20-message window.
+  The agent's configured model selects up to three facts from the 40 most
+  recently updated active memories in MySQL. Supa uses model-based recall in
+  place of NexusAgent's embedding and Milvus search.
+
+Omitted settings keep the existing chat behavior. Memory model calls are
+bounded and best effort. Disabling long-term memory stops extraction and recall.
+Use the authenticated memories API to review, archive, or delete saved facts.
+Deleting an agent removes its saved facts. Legacy NexusAgent memory rows require
+an explicit ownership mapping before import.
 
 ## Streaming example
 
