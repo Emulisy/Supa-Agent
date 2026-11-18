@@ -20,11 +20,13 @@ import (
 // uses Eino's default iteration limit.
 type ChatModelConfig struct {
 	domain.ModelConfig
-	Name          string   `json:"name"`
-	Description   string   `json:"description,omitempty"`
-	Instruction   string   `json:"instruction,omitempty"`
-	MaxIterations int      `json:"max_iterations,omitempty"`
-	Tools         []string `json:"tools,omitempty"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description,omitempty"`
+	Instruction       string   `json:"instruction,omitempty"`
+	MaxIterations     int      `json:"max_iterations,omitempty"`
+	Tools             []string `json:"tools,omitempty"`
+	MemoryWindow      int      `json:"memory_window,omitempty"`
+	MemoryLongEnabled bool     `json:"memory_long_enabled,omitempty"`
 }
 
 // ChatModelAgent validates a persisted definition and builds an Eino agent.
@@ -61,6 +63,10 @@ func (a *ChatModelAgent) Build(ctx context.Context, chatModel model.ToolCallingC
 	if err != nil {
 		return nil, err
 	}
+	return buildChatModelAgent(ctx, config, chatModel, nil)
+}
+
+func buildChatModelAgent(ctx context.Context, config *ChatModelConfig, chatModel model.ToolCallingChatModel, input adk.GenModelInput) (adk.Agent, error) {
 	if chatModelDependencyMissing(chatModel) {
 		return nil, errors.New("agent: chat model is required")
 	}
@@ -73,6 +79,7 @@ func (a *ChatModelAgent) Build(ctx context.Context, chatModel model.ToolCallingC
 		Instruction:   config.Instruction,
 		Model:         chatModel,
 		MaxIterations: config.MaxIterations,
+		GenModelInput: input,
 	}
 	for _, name := range config.Tools {
 		t, err := builtinTool(name)
@@ -80,6 +87,17 @@ func (a *ChatModelAgent) Build(ctx context.Context, chatModel model.ToolCallingC
 			return nil, fmt.Errorf("agent: build tool: %w", err)
 		}
 		adkConfig.ToolsConfig.Tools = append(adkConfig.ToolsConfig.Tools, t)
+	}
+	window := config.MemoryWindow
+	if window == 0 && config.MemoryLongEnabled {
+		window = defaultMemoryWindow
+	}
+	if window > 0 {
+		handler, err := newHistoryCompaction(ctx, chatModel, window)
+		if err != nil {
+			return nil, fmt.Errorf("agent: build memory handlers: %w", err)
+		}
+		adkConfig.Handlers = append(adkConfig.Handlers, handler)
 	}
 	built, err := adk.NewChatModelAgent(ctx, adkConfig)
 	if err != nil {
@@ -121,6 +139,9 @@ func (a *ChatModelAgent) configuration() (*ChatModelConfig, error) {
 	}
 	if config.MaxIterations < 0 {
 		return nil, fmt.Errorf("%w: max_iterations must be non-negative", domain.ErrInvalidDefinition)
+	}
+	if config.MemoryWindow < 0 || config.MemoryWindow > 200 {
+		return nil, fmt.Errorf("%w: memory_window must be between 0 and 200", domain.ErrInvalidDefinition)
 	}
 	seen := make(map[string]bool, len(config.Tools))
 	for _, name := range config.Tools {

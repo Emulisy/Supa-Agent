@@ -18,6 +18,7 @@ import (
 	"github.com/Emulisy/Supa-Agent/internal/config"
 	"github.com/Emulisy/Supa-Agent/internal/infra"
 	"github.com/Emulisy/Supa-Agent/internal/llm"
+	"github.com/Emulisy/Supa-Agent/internal/memory"
 	"github.com/Emulisy/Supa-Agent/internal/repo"
 	"github.com/Emulisy/Supa-Agent/internal/security"
 	"github.com/Emulisy/Supa-Agent/internal/service"
@@ -77,7 +78,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	runtime, err := agent.NewRuntime(gateway)
+	memoryRepo, err := repo.NewMemoryRepository(db)
+	if err != nil {
+		return err
+	}
+	runtime, err := agent.NewRuntime(gateway, memory.NewManager(memoryRepo))
 	if err != nil {
 		return err
 	}

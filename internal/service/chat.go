@@ -191,6 +191,9 @@ func (s *ChatService) execute(ctx context.Context, run model.Run, prepared agent
 		s.finish(run, status, message)
 		return
 	}
+	if err := prepared.Remember(ctx, history[len(history)-1].Content); err != nil {
+		slog.Warn("update agent memory failed", "run_id", run.ID, "error", err)
+	}
 	s.finish(run, model.RunSucceeded, "")
 }
 

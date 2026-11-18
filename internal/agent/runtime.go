@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"sync"
 
 	domain "github.com/Emulisy/Supa-Agent/internal/model"
@@ -21,41 +22,52 @@ type ModelResolver interface {
 // Execution is prepared before a run is accepted, without calling the provider.
 type Execution interface {
 	Run(context.Context, []*schema.Message, func(domain.RunEvent) error) ([]*schema.Message, error)
+	// Remember records the current user message after the completed turn is saved.
+	Remember(context.Context, string) error
 }
 
-type Runtime struct{ models ModelResolver }
+type LongTermMemory interface {
+	Recall(context.Context, domain.MemoryScope, model.BaseChatModel, string) ([]string, error)
+	Remember(context.Context, domain.MemoryScope, model.BaseChatModel, string) error
+}
 
-func NewRuntime(models ModelResolver) (*Runtime, error) {
+type Runtime struct {
+	models   ModelResolver
+	memories LongTermMemory
+}
+
+func NewRuntime(models ModelResolver, memories LongTermMemory) (*Runtime, error) {
 	if chatModelDependencyMissing(models) {
 		return nil, errors.New("agent: model resolver is required")
 	}
-	return &Runtime{models: models}, nil
+	return &Runtime{models: models, memories: memories}, nil
 }
 
 func (r *Runtime) Validate(ctx context.Context, def *domain.Definition) error {
+	_, err := r.validateConfiguration(ctx, def)
+	return err
+}
+
+func (r *Runtime) validateConfiguration(ctx context.Context, def *domain.Definition) (*ChatModelConfig, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	a, err := NewChatModelAgent(def)
-	if err != nil {
-		return err
-	}
+	a := ChatModelAgent{Definition: def}
 	cfg, err := a.configuration()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return r.models.ValidateModel(cfg.Model)
+	if cfg.MemoryLongEnabled && chatModelDependencyMissing(r.memories) {
+		return nil, domain.ErrUnavailable
+	}
+	if err := r.models.ValidateModel(cfg.Model); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 func (r *Runtime) Prepare(ctx context.Context, def *domain.Definition) (Execution, error) {
-	if err := r.Validate(ctx, def); err != nil {
-		return nil, err
-	}
-	a, err := NewChatModelAgent(def)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := a.configuration()
+	cfg, err := r.validateConfiguration(ctx, def)
 	if err != nil {
 		return nil, err
 	}
@@ -63,14 +75,62 @@ func (r *Runtime) Prepare(ctx context.Context, def *domain.Definition) (Executio
 	if err != nil {
 		return nil, err
 	}
-	built, err := a.Build(ctx, m)
+	prepared := &execution{}
+	var input adk.GenModelInput
+	if cfg.MemoryLongEnabled {
+		scope := domain.MemoryScope{UserID: def.UserID, AgentID: def.ID}
+		input = r.memoryInput(scope, m)
+		prepared.remember = func(ctx context.Context, content string) error {
+			return r.memories.Remember(ctx, scope, m, content)
+		}
+	}
+	built, err := buildChatModelAgent(ctx, cfg, m, input)
 	if err != nil {
 		return nil, err
 	}
-	return &execution{agent: built}, nil
+	prepared.agent = built
+	return prepared, nil
 }
 
-type execution struct{ agent adk.Agent }
+func (r *Runtime) memoryInput(scope domain.MemoryScope, chat model.BaseChatModel) adk.GenModelInput {
+	return func(ctx context.Context, instruction string, input *adk.AgentInput) ([]*schema.Message, error) {
+		var system []*schema.Message
+		if instruction != "" {
+			system = append(system, schema.SystemMessage(instruction))
+		}
+		for i := len(input.Messages) - 1; i >= 0; i-- {
+			message := input.Messages[i]
+			if message.Role != schema.User {
+				continue
+			}
+			recallCtx, cancel := context.WithTimeout(ctx, memoryTimeout)
+			facts, err := r.memories.Recall(recallCtx, scope, chat, message.Content)
+			cancel()
+			if err != nil {
+				slog.Warn("agent memory recall failed", "agent_id", scope.AgentID, "error", err)
+			}
+			if len(facts) > 0 {
+				return withPromptData(system, input.Messages, "Relevant stored facts about the user", facts), nil
+			}
+			break
+		}
+		return append(system, input.Messages...), ctx.Err()
+	}
+}
+
+type execution struct {
+	agent    adk.Agent
+	remember func(context.Context, string) error
+}
+
+func (e *execution) Remember(ctx context.Context, content string) error {
+	if e.remember == nil || ctx.Err() != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, memoryTimeout)
+	defer cancel()
+	return e.remember(ctx, content)
+}
 
 func (e *execution) Run(ctx context.Context, history []*schema.Message, emit func(domain.RunEvent) error) ([]*schema.Message, error) {
 	ctx, cancel := context.WithCancel(ctx)

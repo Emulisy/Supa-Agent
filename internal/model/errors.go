@@ -14,6 +14,7 @@ var (
 	ErrInvalidPagination  = errors.New("agent: invalid pagination")
 	ErrSessionNotFound    = errors.New("session: not found")
 	ErrSessionDeleted     = errors.New("memory: session has been deleted")
+	ErrMemoryNotFound     = errors.New("memory: not found")
 	ErrRunNotFound        = errors.New("run: not found")
 	ErrRunFinished        = errors.New("run: already finished")
 	ErrConflict           = errors.New("session: a run is active")
